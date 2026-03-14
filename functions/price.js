@@ -31,7 +31,7 @@ export async function onRequest(context) {
         'Authorization': `Bearer ${API_KEY}`
       },
       body: JSON.stringify({
-        model: 'doubao-seed-2.0-mini-260215',
+        model: 'doubao-seed-2-0-mini-260215',  // 正确的模型 ID
         messages: [
           {
             role: 'system',
