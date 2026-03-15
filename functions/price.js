@@ -42,7 +42,7 @@ category说明：stock_cn=A股, stock_us=美股, fund=基金, crypto=加密货�
 
     const kimiCall = async (messages) => {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 20000);
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
       try {
         const res = await fetch('https://api.moonshot.cn/v1/chat/completions', {
           method: 'POST',
@@ -69,7 +69,7 @@ category说明：stock_cn=A股, stock_us=美股, fund=基金, crypto=加密货�
       }
     };
 
-    // 第一轮：用户提问，Kimi 触发 web_search
+    // 第一轮
     const messages = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage },
@@ -83,12 +83,13 @@ category说明：stock_cn=A股, stock_us=美股, fund=基金, crypto=加密货�
     let data = await res.json();
     let choice = data.choices?.[0];
 
-    // 如果 finish_reason 是 tool_calls，需要第二轮
+    // 如果触发了 tool_calls，需要第二轮
     if (choice?.finish_reason === 'tool_calls') {
-      const assistantMsg = choice.message;
+      const assistantMsg = choice.message; // 原样保留，包含 reasoning_content
       const toolCall = assistantMsg.tool_calls?.[0];
 
-      messages.push({ role: 'assistant', content: '', tool_calls: assistantMsg.tool_calls });
+      // 关键：直接把第一轮 assistant message 原样 push，不手动构造
+      messages.push(assistantMsg);
       messages.push({
         role: 'tool',
         content: toolCall.function.arguments,
