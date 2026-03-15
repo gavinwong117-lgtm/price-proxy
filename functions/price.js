@@ -75,7 +75,7 @@ category 说明：
               tools: [
                 { type: 'builtin_function', function: { name: '$web_search' } }
               ],
-              temperature: 0.1,
+              temperature: 1,
               max_tokens: 512,
             }),
             signal: controller.signal,
