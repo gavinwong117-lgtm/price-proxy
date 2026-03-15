@@ -34,7 +34,8 @@ export async function onRequest(context) {
 只返回JSON，不要任何其他文字，不要markdown代码块：
 {"price":数字,"unit":"单位","note":"一句话说明","confidence":"high/medium/low","category":"stock_cn/stock_us/fund/crypto/gold/realestate/bond/cash/car/other"}
 
-category说明：stock_cn=A股, stock_us=美股, fund=基金, crypto=加密货币, gold=黄金, realestate=房产, bond=债券, cash=现金存款, car=车辆, other=其他`;
+category说明：stock_cn=A股, stock_us=美股, fund=基金, crypto=加密货币, gold=贵金属（含黄金/白银/铂金等）, realestate=房产, bond=债券, cash=现金存款, car=车辆, other=其他。
+价格必须换算为人民币和中国常用计量单位（如克、股、平方米等），严禁返回美元或盎司为单位的价格。`;
 
     const userMessage = (!category || category === 'auto')
       ? name
