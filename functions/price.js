@@ -57,7 +57,7 @@ category说明：stock_cn=A股, stock_us=美股, fund=基金, crypto=加密货�
               { type: 'builtin_function', function: { name: '$web_search' } }
             ],
             thinking: { type: 'disabled' }, // 关闭思考模式，避免 reasoning_content 问题
-            temperature: 1,                  // Kimi k2.5 关闭 thinking 后要求 temperature=1
+            temperature: 0.6,                  // Kimi k2.5 关闭 thinking 后要求 temperature=1
             max_tokens: 512,
           }),
           signal: controller.signal,
