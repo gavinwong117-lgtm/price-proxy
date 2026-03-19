@@ -159,7 +159,7 @@ async function getStockCN(name, category, apiKey, env) {
     const result = {
       price: currentPrice, unit: '元/股',
       note: `${stockName} 实时价，较昨收${parseFloat(changePct) > 0 ? '+' : ''}${changePct}% · 实时`,
-      confidence: 'high', category,
+      confidence: 'high', category, name: stockName,
     };
     // 写规范化 key，后续不同写法可复用
     if (env?.PRICE_CACHE) {
@@ -218,7 +218,7 @@ async function getStockUS(name, category, apiKey, env) {
     const result = {
       price: cnyPrice, unit: '元/股',
       note: `${stockName} 原价 $${usdPrice}，按7.25汇率换算，较昨收${parseFloat(changePct) > 0 ? '+' : ''}${changePct}% · 实时`,
-      confidence: 'high', category,
+      confidence: 'high', category, name: stockName,
     };
     if (env?.PRICE_CACHE) {
       await env.PRICE_CACHE.put(normalizedKey, JSON.stringify(result), { expirationTtl: getTTL(category) });
@@ -272,7 +272,7 @@ async function getStockHK(name, category, apiKey, env) {
     const result = {
       price: cnyPrice, unit: '元/股',
       note: `${stockName} 原价 HK$${hkdPrice}，按0.92汇率换算，较昨收${parseFloat(changePct) > 0 ? '+' : ''}${changePct}% · 实时`,
-      confidence: 'high', category,
+      confidence: 'high', category, name: stockName,
     };
     if (env?.PRICE_CACHE) {
       await env.PRICE_CACHE.put(normalizedKey, JSON.stringify(result), { expirationTtl: getTTL(category) });
@@ -317,7 +317,7 @@ async function getFund(name, category, apiKey, env) {
     const result = {
       price, unit: '元/份',
       note: `${fundData.name} ${fundData.gsz ? '实时估值' : '最新净值'} · 实时`,
-      confidence: fundData.gsz ? 'high' : 'medium', category,
+      confidence: fundData.gsz ? 'high' : 'medium', category, name: fundData.name,
     };
     if (env?.PRICE_CACHE) {
       await env.PRICE_CACHE.put(normalizedKey, JSON.stringify(result), { expirationTtl: getTTL(category) });
@@ -348,7 +348,7 @@ async function getCrypto(name, category, apiKey) {
     return json({
       price, unit: '元/枚',
       note: `${coinName} 实时价，24h ${change >= 0 ? '+' : ''}${change}%`,
-      confidence: 'high', category,
+      confidence: 'high', category, name: coinName,
     });
   } catch { return getByKimi(name, category, apiKey); }
 }
@@ -360,7 +360,8 @@ async function getByKimi(name, category, apiKey) {
 
   const systemPrompt = `你是资产估价助手。必须联网搜索获取最新价格。
 只返回JSON，不要任何其他文字，不要markdown代码块：
-{"price":数字,"unit":"单位","note":"一句话说明","confidence":"high/medium/low","category":"${category}"}
+{"price":数字,"unit":"单位","note":"一句话说明","confidence":"high/medium/low","category":"${category}","name":"资产标准名称"}
+name字段填写该资产的官方/标准名称，例如股票填"贵州茅台"，房产填小区名，车辆填"2022款丰田凯美瑞"。
 价格必须换算为人民币和中国常用计量单位，严禁返回美元或盎司单位。`;
 
   const kimiCall = async (msgs) => fetch('https://api.moonshot.cn/v1/chat/completions', {
@@ -375,7 +376,9 @@ async function getByKimi(name, category, apiKey) {
 
   const messages = [
     { role: 'system', content: systemPrompt },
-    { role: 'user', content: `资产类别：${category}，资产名称：${name}` },
+    { role: 'user', content: category === 'car'
+        ? `资产类别：${category}，资产名称：${name}，请查询该车型当前二手车市场均价（非新车指导价）`
+        : `资产类别：${category}，资产名称：${name}` },
   ];
 
   let res = await kimiCall(messages);

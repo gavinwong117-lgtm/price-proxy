@@ -73,6 +73,7 @@ def build_entries(rows: list[dict]) -> list[dict]:
             "note":       f"{name} 收盘价，较昨收{sign}{chg:.2f}% · 日更",
             "confidence": "high",
             "category":   "stock_cn",
+            "name":       name,
         }, ensure_ascii=False)
 
         # 存两种 key：纯代码 + 带市场前缀

@@ -65,6 +65,7 @@ def build_entries(rows: list[dict]) -> list[dict]:
             "note":       f"{name} 收盘价，较昨收{sign}{chg:.2f}% · 日更",
             "confidence": "high",
             "category":   "stock_hk",
+            "name":       name,
         }, ensure_ascii=False)
 
         entries.append({"key": f"stock_hk:{code}", "value": value, "expiration_ttl": TTL})
