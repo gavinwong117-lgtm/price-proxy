@@ -8,6 +8,7 @@ import akshare as ak
 import json
 import requests
 import os
+import time
 from datetime import datetime
 
 
@@ -72,16 +73,28 @@ def build_entries(rows: list[dict]) -> list[dict]:
     return entries
 
 
+def write_kv_chunk(chunk: list[dict], retries: int = 5) -> None:
+    for attempt in range(retries):
+        resp = requests.put(KV_BULK_URL, headers=HEADERS, data=json.dumps(chunk))
+        if resp.status_code == 429:
+            wait = 30 * (attempt + 1)
+            print(f"限速 429，等待 {wait}s 后重试...")
+            time.sleep(wait)
+            continue
+        resp.raise_for_status()
+        result = resp.json()
+        if not result.get("success"):
+            raise RuntimeError(f"KV 写入失败: {result}")
+        return
+    raise RuntimeError("KV 写入失败：超过最大重试次数")
+
+
 def write_kv(entries: list[dict]) -> None:
     chunk_size = 10_000
     total = len(entries)
     for i in range(0, total, chunk_size):
         chunk = entries[i : i + chunk_size]
-        resp = requests.put(KV_BULK_URL, headers=HEADERS, data=json.dumps(chunk))
-        resp.raise_for_status()
-        result = resp.json()
-        if not result.get("success"):
-            raise RuntimeError(f"KV 写入失败: {result}")
+        write_kv_chunk(chunk)
         end = min(i + chunk_size, total)
         print(f"[{datetime.now():%H:%M:%S}] 写入 {i+1}–{end} / {total} 条 ✓")
 
