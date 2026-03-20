@@ -3,7 +3,7 @@ name: 每日港股价格同步
 on:
   schedule:
     # 每个工作日 23:00 北京时间 = 15:00 UTC
-    - cron: '0 15 * * 1-5'
+    - cron: '40 1 * * 1-5'
   workflow_dispatch:   # 允许手动触发
 
 jobs:
