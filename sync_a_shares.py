@@ -41,7 +41,7 @@ def build_entries(rows: list[dict]) -> list[dict]:
     skipped = 0
 
     for row in rows:
-        code_full = str(row.get("代码", "")).lower()   # e.g. sh600519
+        code_full = str(row.get("代码", "")).lower()
         name      = str(row.get("名称", "")).strip()
         price_raw = row.get("最新价", 0)
         chg_raw   = row.get("涨跌幅", 0)
@@ -76,9 +76,7 @@ def build_entries(rows: list[dict]) -> list[dict]:
             "name":       name,
         }, ensure_ascii=False)
 
-        # 存两种 key：纯代码 + 带市场前缀
-        for key in (f"stock_cn:{pure_code}", f"stock_cn:{code_full}"):
-            entries.append({"key": key, "value": value, "expiration_ttl": TTL})
+        entries.append({"key": f"stock_cn:{pure_code}", "value": value, "expiration_ttl": TTL})
 
     print(f"生成 {len(entries)} 条 KV 记录（跳过停牌 {skipped} 条）")
     return entries

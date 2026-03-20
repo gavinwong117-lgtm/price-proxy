@@ -79,7 +79,9 @@ def write_kv_chunk(chunk: list[dict], retries: int = 5) -> None:
         resp = requests.put(KV_BULK_URL, headers=HEADERS, data=json.dumps(chunk))
         if resp.status_code == 429:
             wait = 30 * (attempt + 1)
-            print(f"限速 429，等待 {wait}s 后重试...")
+            print(f"限速 429，响应头: {dict(resp.headers)}")
+            print(f"限速 429，响应体: {resp.text[:500]}")
+            print(f"等待 {wait}s 后重试...")
             time.sleep(wait)
             continue
         resp.raise_for_status()
