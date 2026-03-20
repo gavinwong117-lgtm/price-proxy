@@ -3,7 +3,7 @@ name: 每日A股价格同步
 on:
   schedule:
     # 每个工作日 15:35 北京时间 = 07:35 UTC
-    - cron: '30 1 * * 1-5'
+    - cron: '35 7 * * 1-5'
   workflow_dispatch:   # 允许手动触发
 
 jobs:
