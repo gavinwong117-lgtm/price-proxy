@@ -114,25 +114,32 @@ function getTTL(category) {
 }
 
 
-// A股：Kimi识别股票代码（不联网）+ 东方财富行情
+// A股：若输入已是6位代码则直接用，否则用Kimi识别
 async function getStockCN(name, category, apiKey, env) {
   try {
-    const kimiRes = await fetch('https://api.moonshot.cn/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: 'moonshot-v1-8k',
-        messages: [
-          { role: 'system', content: '返回A股股票代码，只返回6位数字代码本身，不要任何其他文字。例如"茅台"→"600519"，"平安银行"→"000001"，"比亚迪"→"002594"' },
-          { role: 'user', content: name }
-        ],
-        max_tokens: 10, temperature: 0,
-      }),
-    });
-    const kimiData = await kimiRes.json();
-    const code = kimiData.choices?.[0]?.message?.content?.trim().replace(/\D/g, '');
-    console.log(`[Kimi] 识别「${name}」A股代码 → ${code || '未识别'}`);
-    if (!code || code.length !== 6) return getByKimi(name, category, apiKey);
+    let code;
+    const isCodeInput = /^\d{6}$/.test(name.trim());
+    if (isCodeInput) {
+      code = name.trim();
+      console.log(`[股票] 「${name}」已是A股代码，跳过Kimi`);
+    } else {
+      const kimiRes = await fetch('https://api.moonshot.cn/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: 'moonshot-v1-8k',
+          messages: [
+            { role: 'system', content: '返回A股股票代码，只返回6位数字代码本身，不要任何其他文字。例如"茅台"→"600519"，"平安银行"→"000001"，"比亚迪"→"002594"' },
+            { role: 'user', content: name }
+          ],
+          max_tokens: 10, temperature: 0,
+        }),
+      });
+      const kimiData = await kimiRes.json();
+      code = kimiData.choices?.[0]?.message?.content?.trim().replace(/\D/g, '');
+      console.log(`[Kimi] 识别「${name}」A股代码 → ${code || '未识别'}`);
+      if (!code || code.length !== 6) return getByKimi(name, category, apiKey);
+    }
 
     // 用规范化 key（代码）查缓存，不同写法的同一只股票可命中
     const normalizedKey = `${category}:${code}`;
@@ -154,7 +161,10 @@ async function getStockCN(name, category, apiKey, env) {
     const currentPrice = (priceData?.data?.f43 ?? 0) / 100;
     const stockName = priceData?.data?.f58;
     const changePct = ((priceData?.data?.f170 ?? 0) / 100).toFixed(2);
-    if (!currentPrice || currentPrice <= 0) return getByKimi(name, category, apiKey);
+    if (!currentPrice || currentPrice <= 0) {
+      if (isCodeInput) return json({ error: `代码 ${code} 未找到，请确认后重试` }, 404);
+      return getByKimi(name, category, apiKey);
+    }
 
     const result = {
       price: currentPrice, unit: '元/股',
@@ -169,24 +179,31 @@ async function getStockCN(name, category, apiKey, env) {
   } catch (e) { console.log(`[东财] 查「${name}」A股出错: ${e.message}`); return getByKimi(name, category, apiKey); }
 }
 
-// 美股：Kimi识别ticker（不联网）+ 东方财富行情
+// 美股：若输入已是ticker则直接用，否则用Kimi识别
 async function getStockUS(name, category, apiKey, env) {
   try {
-    const kimiRes = await fetch('https://api.moonshot.cn/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: 'moonshot-v1-8k',
-        messages: [
-          { role: 'system', content: '返回美股ticker代码，只返回代码本身，不要任何其他文字。例如"苹果"→"AAPL"，"谷歌"→"GOOGL"，"特斯拉"→"TSLA"' },
-          { role: 'user', content: name }
-        ],
-        max_tokens: 10, temperature: 0,
-      }),
-    });
-    const kimiData = await kimiRes.json();
-    const ticker = kimiData.choices?.[0]?.message?.content?.trim().toUpperCase();
-    console.log(`[Kimi] 识别「${name}」美股代码 → ${ticker || '未识别'}`);
+    let ticker;
+    const isCodeInput = /^[A-Za-z]{1,5}$/.test(name.trim());
+    if (isCodeInput) {
+      ticker = name.trim().toUpperCase();
+      console.log(`[股票] 「${name}」已是美股代码，跳过Kimi`);
+    } else {
+      const kimiRes = await fetch('https://api.moonshot.cn/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: 'moonshot-v1-8k',
+          messages: [
+            { role: 'system', content: '返回美股ticker代码，只返回代码本身，不要任何其他文字。例如"苹果"→"AAPL"，"谷歌"→"GOOGL"，"特斯拉"→"TSLA"' },
+            { role: 'user', content: name }
+          ],
+          max_tokens: 10, temperature: 0,
+        }),
+      });
+      const kimiData = await kimiRes.json();
+      ticker = kimiData.choices?.[0]?.message?.content?.trim().toUpperCase();
+      console.log(`[Kimi] 识别「${name}」美股代码 → ${ticker || '未识别'}`);
+    }
     if (!ticker) return getByKimi(name, category, apiKey);
 
     // 用规范化 key（ticker）查缓存
@@ -209,7 +226,10 @@ async function getStockUS(name, category, apiKey, env) {
       const data = await priceRes.json();
       if (data?.data?.f43 > 0) { priceData = data.data; break; }
     }
-    if (!priceData) return getByKimi(name, category, apiKey);
+    if (!priceData) {
+      if (isCodeInput) return json({ error: `代码 ${ticker} 未找到，请确认后重试` }, 404);
+      return getByKimi(name, category, apiKey);
+    }
 
     const usdPrice = priceData.f43 / 1000;
     const stockName = priceData.f58;
@@ -227,25 +247,33 @@ async function getStockUS(name, category, apiKey, env) {
   } catch (e) { console.log(`[东财] 查「${name}」美股出错: ${e.message}`); return getByKimi(name, category, apiKey); }
 }
 
-// 港股：Kimi识别股票代码 + 东方财富行情
+// 港股：若输入已是数字代码则直接用，否则用Kimi识别
 async function getStockHK(name, category, apiKey, env) {
   try {
-    const kimiRes = await fetch('https://api.moonshot.cn/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: 'moonshot-v1-8k',
-        messages: [
-          { role: 'system', content: '返回港股股票代码，只返回5位数字代码本身，不要任何其他文字。例如"腾讯"→"00700"，"阿里巴巴"→"09988"，"美团"→"03690"' },
-          { role: 'user', content: name }
-        ],
-        max_tokens: 10, temperature: 0,
-      }),
-    });
-    const kimiData = await kimiRes.json();
-    const code = kimiData.choices?.[0]?.message?.content?.trim().replace(/\D/g, '').padStart(5, '0');
-    console.log(`[Kimi] 识别「${name}」港股代码 → ${code || '未识别'}`);
-    if (!code) return getByKimi(name, category, apiKey);
+    let code;
+    const isCodeInput = /^\d{1,5}$/.test(name.trim());
+    if (isCodeInput) {
+      code = name.trim().padStart(5, '0');
+      console.log(`[股票] 「${name}」已是港股代码，跳过Kimi`);
+    } else {
+      const kimiRes = await fetch('https://api.moonshot.cn/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: 'moonshot-v1-8k',
+          messages: [
+            { role: 'system', content: '返回港股股票代码，只返回5位数字代码本身，不要任何其他文字。例如"腾讯"→"00700"，"阿里巴巴"→"09988"，"美团"→"03690"' },
+            { role: 'user', content: name }
+          ],
+          max_tokens: 10, temperature: 0,
+        }),
+      });
+      const kimiData = await kimiRes.json();
+      const rawCode = kimiData.choices?.[0]?.message?.content?.trim().replace(/\D/g, '');
+      code = rawCode ? rawCode.padStart(5, '0') : '';
+      console.log(`[Kimi] 识别「${name}」港股代码 → ${code || '未识别'}`);
+      if (!code) return getByKimi(name, category, apiKey);
+    }
 
     // 用规范化 key（代码）查缓存
     const normalizedKey = `${category}:${code}`;
@@ -266,7 +294,10 @@ async function getStockHK(name, category, apiKey, env) {
     const hkdPrice = (data?.data?.f43 ?? 0) / 1000;
     const stockName = data?.data?.f58;
     const changePct = ((data?.data?.f170 ?? 0) / 100).toFixed(2);
-    if (!hkdPrice || hkdPrice <= 0) return getByKimi(name, category, apiKey);
+    if (!hkdPrice || hkdPrice <= 0) {
+      if (isCodeInput) return json({ error: `代码 ${code} 未找到，请确认后重试` }, 404);
+      return getByKimi(name, category, apiKey);
+    }
 
     const cnyPrice = Math.round(hkdPrice * 0.92 * 100) / 100;
     const result = {
@@ -360,8 +391,8 @@ async function getByKimi(name, category, apiKey) {
 
   const systemPrompt = `你是资产估价助手。必须联网搜索获取最新价格。
 只返回JSON，不要任何其他文字，不要markdown代码块：
-{"price":数字,"unit":"单位","note":"一句话说明","confidence":"high/medium/low","category":"${category}","name":"资产标准名称"}
-name字段填写该资产的官方/标准名称，例如股票填"贵州茅台"，房产填小区名，车辆填"2022款丰田凯美瑞"。
+{"price":数字,"unit":"单位","note":"一句话说明","confidence":"high/medium/low","name":"资产标准名称"}
+name字段填写该资产的官方/标准名称，例如房产填小区名，车辆填"2022款丰田凯美瑞"。
 价格必须换算为人民币和中国常用计量单位，严禁返回美元或盎司单位。`;
 
   const kimiCall = async (msgs) => fetch('https://api.moonshot.cn/v1/chat/completions', {
@@ -413,7 +444,6 @@ name字段填写该资产的官方/标准名称，例如股票填"贵州茅台"�
   if (typeof priceData.price === 'string') {
     priceData.price = parseFloat(priceData.price.replace(/[^\d.]/g, ''));
   }
-  priceData.category = category;
   if (priceData.note && !priceData.note.includes('·')) priceData.note += ' · Kimi';
   return json(priceData);
 }
