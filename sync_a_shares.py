@@ -1,14 +1,13 @@
 """
 每日A股价格同步脚本
 运行时机：每个交易日 15:35（北京时间）收盘后
-将全量A股数据写入 Cloudflare KV，供 Worker 直接命中，省去东方财富实时查询
+将全量A股数据写入 Cloudflare KV 单条记录（stock_cn:ALL），每天只消耗1次写操作
 """
 
 import akshare as ak
 import json
 import requests
 import os
-import sys
 import time
 from datetime import datetime
 
@@ -36,8 +35,8 @@ def fetch() -> list[dict]:
     return df.to_dict("records")
 
 
-def build_entries(rows: list[dict]) -> list[dict]:
-    entries = []
+def build_blob(rows: list[dict]) -> dict:
+    blob = {}
     skipped = 0
 
     for row in rows:
@@ -46,7 +45,6 @@ def build_entries(rows: list[dict]) -> list[dict]:
         price_raw = row.get("最新价", 0)
         chg_raw   = row.get("涨跌幅", 0)
 
-        # 跳过停牌或无价格
         try:
             price = float(price_raw)
         except (TypeError, ValueError):
@@ -67,24 +65,26 @@ def build_entries(rows: list[dict]) -> list[dict]:
             pure_code = code_full
 
         sign = "+" if chg >= 0 else ""
-        value = json.dumps({
+        blob[pure_code] = {
             "price":      price,
             "unit":       "元/股",
             "note":       f"{name} 收盘价，较昨收{sign}{chg:.2f}% · 日更",
             "confidence": "high",
-            "category":   "stock_cn",
             "name":       name,
-        }, ensure_ascii=False)
+        }
 
-        entries.append({"key": f"stock_cn:{pure_code}", "value": value, "expiration_ttl": TTL})
-
-    print(f"生成 {len(entries)} 条 KV 记录（跳过停牌 {skipped} 条）")
-    return entries
+    print(f"生成 {len(blob)} 条数据（跳过停牌 {skipped} 条）")
+    return blob
 
 
-def write_kv_chunk(chunk: list[dict], retries: int = 5) -> None:
-    for attempt in range(retries):
-        resp = requests.put(KV_BULK_URL, headers=HEADERS, data=json.dumps(chunk))
+def write_kv(blob: dict) -> None:
+    value = json.dumps(blob, ensure_ascii=False)
+    size_kb = len(value.encode()) / 1024
+    print(f"[{datetime.now():%H:%M:%S}] 写入 stock_cn:ALL，{len(blob)} 条，{size_kb:.1f} KB")
+
+    entry = [{"key": "stock_cn:ALL", "value": value, "expiration_ttl": TTL}]
+    for attempt in range(5):
+        resp = requests.put(KV_BULK_URL, headers=HEADERS, data=json.dumps(entry))
         if resp.status_code == 429:
             wait = 30 * (attempt + 1)
             print(f"限速 429，等待 {wait}s 后重试...")
@@ -94,24 +94,15 @@ def write_kv_chunk(chunk: list[dict], retries: int = 5) -> None:
         result = resp.json()
         if not result.get("success"):
             raise RuntimeError(f"KV 写入失败: {result}")
+        print(f"[{datetime.now():%H:%M:%S}] 写入完成 ✓")
         return
     raise RuntimeError("KV 写入失败：超过最大重试次数")
 
 
-def write_kv(entries: list[dict]) -> None:
-    chunk_size = 10_000  # CF KV bulk 上限
-    total = len(entries)
-    for i in range(0, total, chunk_size):
-        chunk = entries[i : i + chunk_size]
-        write_kv_chunk(chunk)
-        end = min(i + chunk_size, total)
-        print(f"[{datetime.now():%H:%M:%S}] 写入 {i+1}–{end} / {total} 条 ✓")
-
-
 def main():
-    rows    = fetch()
-    entries = build_entries(rows)
-    write_kv(entries)
+    rows = fetch()
+    blob = build_blob(rows)
+    write_kv(blob)
     print(f"[{datetime.now():%H:%M:%S}] 同步完成 ✓")
 
 

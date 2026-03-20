@@ -151,6 +151,16 @@ async function getStockCN(name, category, apiKey, env) {
         if (d.note) d.note = d.note.replace(/·\s*实时\s*$/, '· 缓存');
         return json(d);
       }
+      // 查每日同步的 ALL blob
+      const allBlob = await env.PRICE_CACHE.get('stock_cn:ALL');
+      if (allBlob) {
+        const entry = JSON.parse(allBlob)[code];
+        if (entry) {
+          console.log(`[KV] 查「${name}」A股 ALL blob 命中 ${code}`);
+          await env.PRICE_CACHE.put(normalizedKey, JSON.stringify(entry), { expirationTtl: getTTL(category) });
+          return json(entry);
+        }
+      }
     }
 
     const market = code.startsWith('6') ? 1 : 0;
@@ -284,6 +294,16 @@ async function getStockHK(name, category, apiKey, env) {
         const d = JSON.parse(cached);
         if (d.note) d.note = d.note.replace(/·\s*实时\s*$/, '· 缓存');
         return json(d);
+      }
+      // 查每日同步的 ALL blob
+      const allBlob = await env.PRICE_CACHE.get('stock_hk:ALL');
+      if (allBlob) {
+        const entry = JSON.parse(allBlob)[code];
+        if (entry) {
+          console.log(`[KV] 查「${name}」港股 ALL blob 命中 ${code}`);
+          await env.PRICE_CACHE.put(normalizedKey, JSON.stringify(entry), { expirationTtl: getTTL(category) });
+          return json(entry);
+        }
       }
     }
 
