@@ -29,25 +29,33 @@ HEADERS = {
 TTL = 604800  # 7天；同步成功则覆盖，失败则旧数据托底一周
 
 
-def fetch() -> list[dict]:
+def fetch() -> tuple[list[dict], str, str]:
     print(f"[{datetime.now():%H:%M:%S}] 拉取东方财富开放式基金数据...")
     df = ak.fund_open_fund_daily_em()
     print(f"[{datetime.now():%H:%M:%S}] 获取到 {len(df)} 条")
-    return df.to_dict("records")
+    print(f"  列名: {list(df.columns)}")
+
+    # 列名形如 "2020-12-28-单位净值"，动态查找
+    price_col = next((c for c in df.columns if c.endswith("单位净值") and "前交易日" not in c), None)
+    chg_col   = next((c for c in df.columns if "增长率" in c), None)
+    name_col  = next((c for c in df.columns if "简称" in c or "名称" in c), None)
+    print(f"  使用列: 净值={price_col}, 增长率={chg_col}, 名称={name_col}")
+
+    return df.to_dict("records"), price_col or "", chg_col or "", name_col or "基金简称"
 
 
-def build_blob(rows: list[dict]) -> dict:
+def build_blob(rows: list[dict], price_col: str, chg_col: str, name_col: str) -> dict:
     blob = {}
     skipped = 0
 
     for row in rows:
         code = str(row.get("基金代码", "")).strip()
-        name = str(row.get("基金名称", "")).strip()
+        name = str(row.get(name_col, "")).strip()
         if not code or not name:
             skipped += 1
             continue
 
-        price_raw = row.get("单位净值")
+        price_raw = row.get(price_col) if price_col else None
         try:
             price = float(price_raw)
         except (TypeError, ValueError):
@@ -57,7 +65,7 @@ def build_blob(rows: list[dict]) -> dict:
             continue
 
         try:
-            chg = float(row.get("日增长率", 0) or 0)
+            chg = float(row.get(chg_col, 0) or 0) if chg_col else 0.0
         except (TypeError, ValueError):
             chg = 0.0
 
@@ -97,8 +105,8 @@ def write_kv(blob: dict) -> None:
 
 
 def main():
-    rows = fetch()
-    blob = build_blob(rows)
+    rows, price_col, chg_col, name_col = fetch()
+    blob = build_blob(rows, price_col, chg_col, name_col)
     write_kv(blob)
     print(f"[{datetime.now():%H:%M:%S}] 同步完成 ✓")
 
