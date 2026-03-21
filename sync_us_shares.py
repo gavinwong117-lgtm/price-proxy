@@ -2,7 +2,7 @@
 美股价格同步脚本（新浪）
 运行时机：每个工作日 02:00（北京时间）
 将全量美股数据写入 Cloudflare KV 单条记录（stock_us:ALL）
-价格以人民币存储（USD × 7.25）
+价格以人民币存储（USD × 实时汇率，来源 frankfurter.app，失败兜底 7.25）
 """
 
 import akshare as ak
@@ -27,7 +27,18 @@ HEADERS = {
 }
 
 TTL = 604800  # 7天；同步成功则覆盖，失败则旧数据托底一周
-USD_TO_CNY = 7.25
+USD_TO_CNY_FALLBACK = 7.25
+
+
+def get_usd_cny() -> float:
+    try:
+        r = requests.get("https://api.frankfurter.app/latest?from=USD&to=CNY", timeout=5)
+        rate = r.json()["rates"]["CNY"]
+        print(f"[汇率] USD/CNY = {rate}（frankfurter.app）")
+        return rate
+    except Exception as e:
+        print(f"[汇率] 获取失败: {e}，使用兜底值 {USD_TO_CNY_FALLBACK}")
+        return USD_TO_CNY_FALLBACK
 
 
 def fetch() -> list[dict]:
@@ -37,7 +48,7 @@ def fetch() -> list[dict]:
     return df.to_dict("records")
 
 
-def build_blob(rows: list[dict]) -> dict:
+def build_blob(rows: list[dict], usd_to_cny: float) -> dict:
     blob = {}
     skipped = 0
 
@@ -64,12 +75,12 @@ def build_blob(rows: list[dict]) -> dict:
         except (TypeError, ValueError):
             chg = 0.0
 
-        cny_price = round(usd_price * USD_TO_CNY, 2)
+        cny_price = round(usd_price * usd_to_cny, 2)
         sign = "+" if chg >= 0 else ""
         blob[symbol] = {
             "price":      cny_price,
             "unit":       "元/股",
-            "note":       f"{display_name} 原价 ${usd_price}，按{USD_TO_CNY}汇率换算，较昨收{sign}{chg:.2f}% · 日更",
+            "note":       f"{display_name} 原价 ${usd_price}，按{usd_to_cny}汇率换算，较昨收{sign}{chg:.2f}% · 日更",
             "confidence": "high",
             "name":       display_name,
         }
@@ -101,8 +112,9 @@ def write_kv(blob: dict) -> None:
 
 
 def main():
+    usd_to_cny = get_usd_cny()
     rows = fetch()
-    blob = build_blob(rows)
+    blob = build_blob(rows, usd_to_cny)
     write_kv(blob)
     print(f"[{datetime.now():%H:%M:%S}] 同步完成 ✓")
 
