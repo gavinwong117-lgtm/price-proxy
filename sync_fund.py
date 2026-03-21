@@ -1,7 +1,8 @@
 """
-基金净值同步脚本（同花顺）
+基金净值同步脚本（东方财富）
 运行时机：每个工作日 01:00（北京时间）
-将全量基金数据写入 Cloudflare KV 单条记录（fund:ALL）
+将全量开放式基金数据写入 Cloudflare KV 单条记录（fund:ALL）
+数据来源：天天基金网，每交易日 16:00-23:00 更新当日净值
 """
 
 import akshare as ak
@@ -29,8 +30,8 @@ TTL = 604800  # 7天；同步成功则覆盖，失败则旧数据托底一周
 
 
 def fetch() -> list[dict]:
-    print(f"[{datetime.now():%H:%M:%S}] 拉取同花顺基金数据（全部类型）...")
-    df = ak.fund_etf_category_ths(symbol="", date="")
+    print(f"[{datetime.now():%H:%M:%S}] 拉取东方财富开放式基金数据...")
+    df = ak.fund_open_fund_daily_em()
     print(f"[{datetime.now():%H:%M:%S}] 获取到 {len(df)} 条")
     return df.to_dict("records")
 
@@ -46,8 +47,7 @@ def build_blob(rows: list[dict]) -> dict:
             skipped += 1
             continue
 
-        # 优先用当前-单位净值，次用最新-单位净值
-        price_raw = row.get("当前-单位净值") or row.get("最新-单位净值")
+        price_raw = row.get("单位净值")
         try:
             price = float(price_raw)
         except (TypeError, ValueError):
@@ -57,7 +57,7 @@ def build_blob(rows: list[dict]) -> dict:
             continue
 
         try:
-            chg = float(row.get("增长率", 0) or 0)
+            chg = float(row.get("日增长率", 0) or 0)
         except (TypeError, ValueError):
             chg = 0.0
 
