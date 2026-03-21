@@ -57,7 +57,19 @@ export default {
 
       if (!category) return json({ error: 'Missing category' }, 400);
 
-      // Step 1: 查 KV 缓存
+      // 股票/基金/加密货币直接路由，不走独立 key 缓存
+      const codeCategories = ['stock_cn', 'stock_hk', 'stock_us', 'fund', 'crypto'];
+      if (codeCategories.includes(category)) {
+        switch (category) {
+          case 'stock_cn': return getStockCN(name, env);
+          case 'stock_hk': return getStockHK(name, env);
+          case 'stock_us': return getStockUS(name, env);
+          case 'fund':     return getFund(name, env);
+          case 'crypto':   return getCrypto(name);
+        }
+      }
+
+      // Step 1: 非股票类查 KV 缓存
       const cacheKey = `${category}:${name.toLowerCase()}`;
       if (env.PRICE_CACHE) {
         const cached = await env.PRICE_CACHE.get(cacheKey);
@@ -71,18 +83,8 @@ export default {
         }
       }
 
-      // Step 3: 按类别路由到对应数据源
-      const fetchFn = () => {
-        switch (category) {
-          case 'stock_cn':  return getStockCN(name, category, KIMI_API_KEY, env);
-          case 'stock_hk':  return getStockHK(name, category, KIMI_API_KEY, env);
-          case 'stock_us':  return getStockUS(name, category, KIMI_API_KEY, env);
-          case 'fund':      return getFund(name, category, KIMI_API_KEY, env);
-          case 'crypto':    return getCrypto(name, category, KIMI_API_KEY);
-          default:          return getByKimi(name, category, KIMI_API_KEY);
-        }
-      };
-      const response = await fetchFn();
+      // Step 3: 其他资产类别（gold/realestate/car/other）走 Kimi
+      const response = await getByKimi(name, category, KIMI_API_KEY);
 
       // Step 4: 写入 KV 缓存（按类别设不同 TTL）
       if (env.PRICE_CACHE) {
@@ -114,50 +116,18 @@ function getTTL(category) {
 }
 
 
-// A股：若输入已是6位代码则直接用，否则用Kimi识别
-async function getStockCN(name, category, apiKey, env) {
-  try {
-    let code;
-    const isCodeInput = /^\d{6}$/.test(name.trim());
-    if (isCodeInput) {
-      code = name.trim();
-      console.log(`[股票] 「${name}」已是A股代码，跳过Kimi`);
-    } else {
-      const kimiRes = await fetch('https://api.moonshot.cn/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: 'moonshot-v1-8k',
-          messages: [
-            { role: 'system', content: '返回A股股票代码，只返回6位数字代码本身，不要任何其他文字。例如"茅台"→"600519"，"平安银行"→"000001"，"比亚迪"→"002594"' },
-            { role: 'user', content: name }
-          ],
-          max_tokens: 10, temperature: 0,
-        }),
-      });
-      const kimiData = await kimiRes.json();
-      code = kimiData.choices?.[0]?.message?.content?.trim().replace(/\D/g, '');
-      console.log(`[Kimi] 识别「${name}」A股代码 → ${code || '未识别'}`);
-      if (!code || code.length !== 6) return getByKimi(name, category, apiKey);
-    }
+// A股：仅接受6位数字代码，直接查 ALL blob，miss 则查东方财富实时
+async function getStockCN(name, env) {
+  const code = name.trim();
+  if (!/^\d{6}$/.test(code)) return json({ error: 'A股代码须为6位数字' }, 400);
 
-    // 用规范化 key（代码）查缓存，不同写法的同一只股票可命中
-    const normalizedKey = `${category}:${code}`;
+  try {
     if (env?.PRICE_CACHE) {
-      const cached = await env.PRICE_CACHE.get(normalizedKey);
-      if (cached) {
-        console.log(`[KV] 查「${name}」A股代码缓存 → 命中 ${normalizedKey}`);
-        const d = JSON.parse(cached);
-        if (d.note) d.note = d.note.replace(/·\s*实时\s*$/, '· 缓存');
-        return json(d);
-      }
-      // 查每日同步的 ALL blob
       const allBlob = await env.PRICE_CACHE.get('stock_cn:ALL');
       if (allBlob) {
         const entry = JSON.parse(allBlob)[code];
         if (entry) {
-          console.log(`[KV] 查「${name}」A股 ALL blob 命中 ${code}`);
-          await env.PRICE_CACHE.put(normalizedKey, JSON.stringify(entry), { expirationTtl: getTTL(category) });
+          console.log(`[KV] A股 ALL blob 命中 ${code}`);
           return json(entry);
         }
       }
@@ -165,66 +135,40 @@ async function getStockCN(name, category, apiKey, env) {
 
     const market = code.startsWith('6') ? 1 : 0;
     const priceRes = await fetch(
-      `https://push2.eastmoney.com/api/qt/stock/get?secid=${market}.${code}&fields=f43,f58,f169,f170`
+      `https://push2.eastmoney.com/api/qt/stock/get?secid=${market}.${code}&fields=f43,f58,f170`
     );
     const priceData = await priceRes.json();
     const currentPrice = (priceData?.data?.f43 ?? 0) / 100;
     const stockName = priceData?.data?.f58;
     const changePct = ((priceData?.data?.f170 ?? 0) / 100).toFixed(2);
-    if (!currentPrice || currentPrice <= 0) {
-      if (isCodeInput) return json({ error: `代码 ${code} 未找到，请确认后重试` }, 404);
-      return getByKimi(name, category, apiKey);
-    }
+    if (!currentPrice || currentPrice <= 0) return json({ error: `代码 ${code} 未找到，请确认后重试` }, 404);
 
-    const result = {
+    console.log(`[东财] A股 ${code} 实时价 ${currentPrice}`);
+    return json({
       price: currentPrice, unit: '元/股',
       note: `${stockName} 实时价，较昨收${parseFloat(changePct) > 0 ? '+' : ''}${changePct}% · 实时`,
-      confidence: 'high', category, name: stockName,
-    };
-    // 写规范化 key，后续不同写法可复用
-    if (env?.PRICE_CACHE) {
-      await env.PRICE_CACHE.put(normalizedKey, JSON.stringify(result), { expirationTtl: getTTL(category) });
-    }
-    return json(result);
-  } catch (e) { console.log(`[东财] 查「${name}」A股出错: ${e.message}`); return getByKimi(name, category, apiKey); }
+      confidence: 'high', name: stockName,
+    });
+  } catch (e) {
+    console.log(`[东财] 查A股 ${code} 出错: ${e.message}`);
+    return json({ error: '查询失败，请稍后重试' }, 500);
+  }
 }
 
-// 美股：若输入已是ticker则直接用，否则用Kimi识别
-async function getStockUS(name, category, apiKey, env) {
-  try {
-    let ticker;
-    const isCodeInput = /^[A-Za-z]{1,5}$/.test(name.trim());
-    if (isCodeInput) {
-      ticker = name.trim().toUpperCase();
-      console.log(`[股票] 「${name}」已是美股代码，跳过Kimi`);
-    } else {
-      const kimiRes = await fetch('https://api.moonshot.cn/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: 'moonshot-v1-8k',
-          messages: [
-            { role: 'system', content: '返回美股ticker代码，只返回代码本身，不要任何其他文字。例如"苹果"→"AAPL"，"谷歌"→"GOOGL"，"特斯拉"→"TSLA"' },
-            { role: 'user', content: name }
-          ],
-          max_tokens: 10, temperature: 0,
-        }),
-      });
-      const kimiData = await kimiRes.json();
-      ticker = kimiData.choices?.[0]?.message?.content?.trim().toUpperCase();
-      console.log(`[Kimi] 识别「${name}」美股代码 → ${ticker || '未识别'}`);
-    }
-    if (!ticker) return getByKimi(name, category, apiKey);
+// 美股：仅接受1-5位字母ticker，直接查 ALL blob，miss 则查东方财富实时
+async function getStockUS(name, env) {
+  const ticker = name.trim().toUpperCase();
+  if (!/^[A-Z]{1,5}$/.test(ticker)) return json({ error: '美股代码须为1-5位字母，如：AAPL' }, 400);
 
-    // 用规范化 key（ticker）查缓存
-    const normalizedKey = `${category}:${ticker}`;
+  try {
     if (env?.PRICE_CACHE) {
-      const cached = await env.PRICE_CACHE.get(normalizedKey);
-      if (cached) {
-        console.log(`[KV] 查「${name}」美股代码缓存 → 命中 ${normalizedKey}`);
-        const d = JSON.parse(cached);
-        if (d.note) d.note = d.note.replace(/·\s*实时\s*$/, '· 缓存');
-        return json(d);
+      const allBlob = await env.PRICE_CACHE.get('stock_us:ALL');
+      if (allBlob) {
+        const entry = JSON.parse(allBlob)[ticker];
+        if (entry) {
+          console.log(`[KV] 美股 ALL blob 命中 ${ticker}`);
+          return json(entry);
+        }
       }
     }
 
@@ -236,72 +180,36 @@ async function getStockUS(name, category, apiKey, env) {
       const data = await priceRes.json();
       if (data?.data?.f43 > 0) { priceData = data.data; break; }
     }
-    if (!priceData) {
-      if (isCodeInput) return json({ error: `代码 ${ticker} 未找到，请确认后重试` }, 404);
-      return getByKimi(name, category, apiKey);
-    }
+    if (!priceData) return json({ error: `代码 ${ticker} 未找到，请确认后重试` }, 404);
 
     const usdPrice = priceData.f43 / 1000;
     const stockName = priceData.f58;
     const changePct = (priceData.f170 / 100).toFixed(2);
     const cnyPrice = Math.round(usdPrice * 7.25 * 100) / 100;
-    const result = {
+    console.log(`[东财] 美股 ${ticker} 实时价 $${usdPrice}`);
+    return json({
       price: cnyPrice, unit: '元/股',
       note: `${stockName} 原价 $${usdPrice}，按7.25汇率换算，较昨收${parseFloat(changePct) > 0 ? '+' : ''}${changePct}% · 实时`,
-      confidence: 'high', category, name: stockName,
-    };
-    if (env?.PRICE_CACHE) {
-      await env.PRICE_CACHE.put(normalizedKey, JSON.stringify(result), { expirationTtl: getTTL(category) });
-    }
-    return json(result);
-  } catch (e) { console.log(`[东财] 查「${name}」美股出错: ${e.message}`); return getByKimi(name, category, apiKey); }
+      confidence: 'high', name: stockName,
+    });
+  } catch (e) {
+    console.log(`[东财] 查美股 ${ticker} 出错: ${e.message}`);
+    return json({ error: '查询失败，请稍后重试' }, 500);
+  }
 }
 
-// 港股：若输入已是数字代码则直接用，否则用Kimi识别
-async function getStockHK(name, category, apiKey, env) {
-  try {
-    let code;
-    const isCodeInput = /^\d{1,5}$/.test(name.trim());
-    if (isCodeInput) {
-      code = name.trim().padStart(5, '0');
-      console.log(`[股票] 「${name}」已是港股代码，跳过Kimi`);
-    } else {
-      const kimiRes = await fetch('https://api.moonshot.cn/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: 'moonshot-v1-8k',
-          messages: [
-            { role: 'system', content: '返回港股股票代码，只返回5位数字代码本身，不要任何其他文字。例如"腾讯"→"00700"，"阿里巴巴"→"09988"，"美团"→"03690"' },
-            { role: 'user', content: name }
-          ],
-          max_tokens: 10, temperature: 0,
-        }),
-      });
-      const kimiData = await kimiRes.json();
-      const rawCode = kimiData.choices?.[0]?.message?.content?.trim().replace(/\D/g, '');
-      code = rawCode ? rawCode.padStart(5, '0') : '';
-      console.log(`[Kimi] 识别「${name}」港股代码 → ${code || '未识别'}`);
-      if (!code) return getByKimi(name, category, apiKey);
-    }
+// 港股：仅接受1-5位数字代码，补零到5位，直接查 ALL blob，miss 则查东方财富实时
+async function getStockHK(name, env) {
+  if (!/^\d{5}$/.test(name.trim())) return json({ error: '港股代码须为5位数字，如：00700' }, 400);
+  const code = name.trim();
 
-    // 用规范化 key（代码）查缓存
-    const normalizedKey = `${category}:${code}`;
+  try {
     if (env?.PRICE_CACHE) {
-      const cached = await env.PRICE_CACHE.get(normalizedKey);
-      if (cached) {
-        console.log(`[KV] 查「${name}」港股代码缓存 → 命中 ${normalizedKey}`);
-        const d = JSON.parse(cached);
-        if (d.note) d.note = d.note.replace(/·\s*实时\s*$/, '· 缓存');
-        return json(d);
-      }
-      // 查每日同步的 ALL blob
       const allBlob = await env.PRICE_CACHE.get('stock_hk:ALL');
       if (allBlob) {
         const entry = JSON.parse(allBlob)[code];
         if (entry) {
-          console.log(`[KV] 查「${name}」港股 ALL blob 命中 ${code}`);
-          await env.PRICE_CACHE.put(normalizedKey, JSON.stringify(entry), { expirationTtl: getTTL(category) });
+          console.log(`[KV] 港股 ALL blob 命中 ${code}`);
           return json(entry);
         }
       }
@@ -314,71 +222,60 @@ async function getStockHK(name, category, apiKey, env) {
     const hkdPrice = (data?.data?.f43 ?? 0) / 1000;
     const stockName = data?.data?.f58;
     const changePct = ((data?.data?.f170 ?? 0) / 100).toFixed(2);
-    if (!hkdPrice || hkdPrice <= 0) {
-      if (isCodeInput) return json({ error: `代码 ${code} 未找到，请确认后重试` }, 404);
-      return getByKimi(name, category, apiKey);
-    }
+    if (!hkdPrice || hkdPrice <= 0) return json({ error: `代码 ${code} 未找到，请确认后重试` }, 404);
 
-    const cnyPrice = Math.round(hkdPrice * 0.92 * 100) / 100;
-    const result = {
-      price: cnyPrice, unit: '元/股',
+    console.log(`[东财] 港股 ${code} 实时价 HK$${hkdPrice}`);
+    return json({
+      price: Math.round(hkdPrice * 0.92 * 100) / 100, unit: '元/股',
       note: `${stockName} 原价 HK$${hkdPrice}，按0.92汇率换算，较昨收${parseFloat(changePct) > 0 ? '+' : ''}${changePct}% · 实时`,
-      confidence: 'high', category, name: stockName,
-    };
-    if (env?.PRICE_CACHE) {
-      await env.PRICE_CACHE.put(normalizedKey, JSON.stringify(result), { expirationTtl: getTTL(category) });
-    }
-    return json(result);
-  } catch (e) { console.log(`[东财] 查「${name}」港股出错: ${e.message}`); return getByKimi(name, category, apiKey); }
+      confidence: 'high', name: stockName,
+    });
+  } catch (e) {
+    console.log(`[东财] 查港股 ${code} 出错: ${e.message}`);
+    return json({ error: '查询失败，请稍后重试' }, 500);
+  }
 }
 
-// 基金：东方财富
-async function getFund(name, category, apiKey, env) {
-  try {
-    const searchRes = await fetch(
-      `https://fundsuggest.eastmoney.com/FundSearch/api/FundSearchAPI.ashx?callback=&m=1&key=${encodeURIComponent(name)}`,
-      { headers: { Referer: 'https://fund.eastmoney.com' } }
-    );
-    const searchText = await searchRes.text();
-    const searchData = JSON.parse(searchText.replace(/^\(/, '').replace(/\)$/, '') || '{}');
-    const code = searchData?.Datas?.[0]?.CODE;
-    if (!code) return getByKimi(name, category, apiKey);
+// 基金：仅接受6位数字代码，直接查 ALL blob，miss 则查 fundgz 实时估值
+async function getFund(name, env) {
+  const code = name.trim();
+  if (!/^\d{6}$/.test(code)) return json({ error: '基金代码须为6位数字，如：110010' }, 400);
 
-    // 用规范化 key（基金代码）查缓存
-    const normalizedKey = `${category}:${code}`;
+  try {
     if (env?.PRICE_CACHE) {
-      const cached = await env.PRICE_CACHE.get(normalizedKey);
-      if (cached) {
-        console.log(`[KV] 查「${name}」基金代码缓存 → 命中 ${normalizedKey}`);
-        const d = JSON.parse(cached);
-        if (d.note) d.note = d.note.replace(/·\s*实时\s*$/, '· 缓存');
-        return json(d);
+      const allBlob = await env.PRICE_CACHE.get('fund:ALL');
+      if (allBlob) {
+        const entry = JSON.parse(allBlob)[code];
+        if (entry) {
+          console.log(`[KV] 基金 ALL blob 命中 ${code}`);
+          return json(entry);
+        }
       }
     }
 
     const priceRes = await fetch(`https://fundgz.1234567.com.cn/js/${code}.js?rt=${Date.now()}`);
     const priceText = await priceRes.text();
     const priceMatch = priceText.match(/jsonpgz\((\{.*\})\)/);
-    if (!priceMatch) return getByKimi(name, category, apiKey);
+    if (!priceMatch) return json({ error: `代码 ${code} 未找到，请确认后重试` }, 404);
 
     const fundData = JSON.parse(priceMatch[1]);
     const price = parseFloat(fundData.gsz || fundData.dwjz);
-    if (!price || price <= 0) return getByKimi(name, category, apiKey);
+    if (!price || price <= 0) return json({ error: `代码 ${code} 未找到，请确认后重试` }, 404);
 
-    const result = {
+    console.log(`[基金] ${code} 实时估值 ${price}`);
+    return json({
       price, unit: '元/份',
       note: `${fundData.name} ${fundData.gsz ? '实时估值' : '最新净值'} · 实时`,
-      confidence: fundData.gsz ? 'high' : 'medium', category, name: fundData.name,
-    };
-    if (env?.PRICE_CACHE) {
-      await env.PRICE_CACHE.put(normalizedKey, JSON.stringify(result), { expirationTtl: getTTL(category) });
-    }
-    return json(result);
-  } catch (e) { console.log(`[东财] 查「${name}」基金出错: ${e.message}`); return getByKimi(name, category, apiKey); }
+      confidence: fundData.gsz ? 'high' : 'medium', name: fundData.name,
+    });
+  } catch (e) {
+    console.log(`[基金] 查 ${code} 出错: ${e.message}`);
+    return json({ error: '查询失败，请稍后重试' }, 500);
+  }
 }
 
-// 加密货币：CoinGecko
-async function getCrypto(name, category, apiKey) {
+// 加密货币：CoinGecko 实时查询，不走 KV 缓存
+async function getCrypto(name) {
   try {
     const searchRes = await fetch(
       `https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(name)}`
@@ -386,7 +283,7 @@ async function getCrypto(name, category, apiKey) {
     const searchData = await searchRes.json();
     const coinId = searchData?.coins?.[0]?.id;
     const coinName = searchData?.coins?.[0]?.name;
-    if (!coinId) return getByKimi(name, category, apiKey);
+    if (!coinId) return json({ error: `未找到加密货币「${name}」，请检查名称后重试` }, 404);
 
     const priceRes = await fetch(
       `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=cny&include_24hr_change=true`
@@ -394,14 +291,16 @@ async function getCrypto(name, category, apiKey) {
     const priceData = await priceRes.json();
     const price = priceData?.[coinId]?.cny;
     const change = priceData?.[coinId]?.cny_24h_change?.toFixed(2);
-    if (!price) return getByKimi(name, category, apiKey);
+    if (!price) return json({ error: `未找到加密货币「${name}」价格，请稍后重试` }, 404);
 
     return json({
       price, unit: '元/枚',
       note: `${coinName} 实时价，24h ${change >= 0 ? '+' : ''}${change}%`,
-      confidence: 'high', category, name: coinName,
+      confidence: 'high', name: coinName,
     });
-  } catch { return getByKimi(name, category, apiKey); }
+  } catch (e) {
+    return json({ error: '查询失败，请稍后重试' }, 500);
+  }
 }
 
 // Kimi 联网（房产/黄金/车辆/其他的兜底）

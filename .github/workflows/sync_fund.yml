@@ -1,0 +1,29 @@
+name: 每日基金净值同步
+
+on:
+  schedule:
+    # 每个工作日 01:00 北京时间 = 17:00 UTC（前一天）
+    - cron: '0 17 * * 0-4'
+  workflow_dispatch:   # 允许手动触发
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: pip install --upgrade akshare requests
+
+      - name: 同步基金净值到 Cloudflare KV
+        env:
+          CF_ACCOUNT_ID:      ${{ secrets.CF_ACCOUNT_ID }}
+          CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
+          CF_API_TOKEN:       ${{ secrets.CF_API_TOKEN }}
+        run: python sync_fund.py

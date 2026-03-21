@@ -1,7 +1,8 @@
 """
-每日A股价格同步脚本
-运行时机：每个交易日 15:35（北京时间）收盘后
-将全量A股数据写入 Cloudflare KV 单条记录（stock_cn:ALL），每天只消耗1次写操作
+美股价格同步脚本（新浪）
+运行时机：每个工作日 02:00（北京时间）
+将全量美股数据写入 Cloudflare KV 单条记录（stock_us:ALL）
+价格以人民币存储（USD × 7.25）
 """
 
 import akshare as ak
@@ -12,9 +13,9 @@ import time
 from datetime import datetime
 
 
-CF_ACCOUNT_ID    = os.environ["CF_ACCOUNT_ID"]
-CF_NAMESPACE_ID  = os.environ["CF_KV_NAMESPACE_ID"]
-CF_API_TOKEN     = os.environ["CF_API_TOKEN"]
+CF_ACCOUNT_ID   = os.environ["CF_ACCOUNT_ID"]
+CF_NAMESPACE_ID = os.environ["CF_KV_NAMESPACE_ID"]
+CF_API_TOKEN    = os.environ["CF_API_TOKEN"]
 
 KV_BULK_URL = (
     f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}"
@@ -26,11 +27,12 @@ HEADERS = {
 }
 
 TTL = 604800  # 7天；同步成功则覆盖，失败则旧数据托底一周
+USD_TO_CNY = 7.25
 
 
 def fetch() -> list[dict]:
-    print(f"[{datetime.now():%H:%M:%S}] 拉取新浪A股数据...")
-    df = ak.stock_zh_a_spot()
+    print(f"[{datetime.now():%H:%M:%S}] 拉取新浪美股数据...")
+    df = ak.stock_us_spot()
     print(f"[{datetime.now():%H:%M:%S}] 获取到 {len(df)} 条")
     return df.to_dict("records")
 
@@ -40,49 +42,48 @@ def build_blob(rows: list[dict]) -> dict:
     skipped = 0
 
     for row in rows:
-        code_full = str(row.get("代码", "")).lower()
-        name      = str(row.get("名称", "")).strip()
-        price_raw = row.get("最新价", 0)
-        chg_raw   = row.get("涨跌幅", 0)
+        symbol = str(row.get("symbol", "")).strip().upper()
+        if not symbol:
+            skipped += 1
+            continue
+
+        cname = str(row.get("cname", "")).strip()
+        name  = str(row.get("name", "")).strip()
+        display_name = cname if cname else name
 
         try:
-            price = float(price_raw)
+            usd_price = float(row.get("price", 0) or 0)
         except (TypeError, ValueError):
-            price = 0.0
-        if price <= 0:
+            usd_price = 0.0
+        if usd_price <= 0:
             skipped += 1
             continue
 
         try:
-            chg = float(chg_raw)
+            chg = float(row.get("chg", 0) or 0)
         except (TypeError, ValueError):
             chg = 0.0
 
-        # 去掉市场前缀 sh/sz/bj → 纯代码
-        if code_full[:2] in ("sh", "sz", "bj"):
-            pure_code = code_full[2:]
-        else:
-            pure_code = code_full
-
+        cny_price = round(usd_price * USD_TO_CNY, 2)
         sign = "+" if chg >= 0 else ""
-        blob[pure_code] = {
-            "price":      price,
+        blob[symbol] = {
+            "price":      cny_price,
             "unit":       "元/股",
-            "note":       f"{name} 收盘价，较昨收{sign}{chg:.2f}% · 日更",
+            "note":       f"{display_name} 原价 ${usd_price}，按{USD_TO_CNY}汇率换算，较昨收{sign}{chg:.2f}% · 日更",
             "confidence": "high",
-            "name":       name,
+            "name":       display_name,
         }
 
-    print(f"生成 {len(blob)} 条数据（跳过停牌 {skipped} 条）")
+    print(f"生成 {len(blob)} 条数据（跳过 {skipped} 条）")
     return blob
 
 
 def write_kv(blob: dict) -> None:
     value = json.dumps(blob, ensure_ascii=False)
     size_kb = len(value.encode()) / 1024
-    print(f"[{datetime.now():%H:%M:%S}] 写入 stock_cn:ALL，{len(blob)} 条，{size_kb:.1f} KB")
+    print(f"[{datetime.now():%H:%M:%S}] 写入 stock_us:ALL，{len(blob)} 条，{size_kb:.1f} KB")
 
-    entry = [{"key": "stock_cn:ALL", "value": value, "expiration_ttl": TTL}]
+    entry = [{"key": "stock_us:ALL", "value": value, "expiration_ttl": TTL}]
     for attempt in range(5):
         resp = requests.put(KV_BULK_URL, headers=HEADERS, data=json.dumps(entry))
         if resp.status_code == 429:

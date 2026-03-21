@@ -25,7 +25,7 @@ HEADERS = {
     "Content-Type": "application/json",
 }
 
-TTL = 176400  # 49小时，冗余24小时；同步成功则覆盖，失败则旧数据再撑一天
+TTL = 604800  # 7天；同步成功则覆盖，失败则旧数据托底一周
 
 
 def fetch() -> list[dict]:
