@@ -57,8 +57,8 @@ export default {
 
       if (!category) return json({ error: 'Missing category' }, 400);
 
-      // 股票/基金/加密货币直接路由，不走独立 key 缓存
-      const codeCategories = ['stock_cn', 'stock_hk', 'stock_us', 'fund', 'crypto'];
+      // 股票/基金/加密货币/黄金直接路由，不走独立 key 缓存
+      const codeCategories = ['stock_cn', 'stock_hk', 'stock_us', 'fund', 'crypto', 'gold'];
       if (codeCategories.includes(category)) {
         switch (category) {
           case 'stock_cn': return getStockCN(name, env);
@@ -66,6 +66,7 @@ export default {
           case 'stock_us': return getStockUS(name, env);
           case 'fund':     return getFund(name, env);
           case 'crypto':   return getCrypto(name);
+          case 'gold':     return getGold(env);
         }
       }
 
@@ -111,7 +112,7 @@ function json(data, status = 200) {
 
 // 不同资产类别的 KV 缓存 TTL
 function getTTL(category) {
-  if (['gold', 'realestate', 'car', 'other'].includes(category)) return 302400; // 慢变资产：84小时
+  if (['realestate', 'car', 'other'].includes(category)) return 302400; // 慢变资产：84小时
   return 86400; // 股票/基金/加密货币：24小时
 }
 
@@ -303,7 +304,27 @@ async function getCrypto(name) {
   }
 }
 
-// Kimi 联网（房产/黄金/车辆/其他的兜底）
+// 黄金：从 gold:ALL blob 读取 Au99.99 现货价
+async function getGold(env) {
+  try {
+    if (env?.PRICE_CACHE) {
+      const blob = await env.PRICE_CACHE.get('gold:ALL');
+      if (blob) {
+        const data = JSON.parse(blob);
+        const gold = data['Au99.99'];
+        if (gold?.price > 0) {
+          console.log(`[KV] gold:ALL 命中，价格 ${gold.price}`);
+          return json(gold);
+        }
+      }
+    }
+    return json({ error: '黄金价格暂未同步，请稍后重试' }, 503);
+  } catch (e) {
+    return json({ error: '查询失败，请稍后重试' }, 500);
+  }
+}
+
+// Kimi 联网（房产/车辆/其他的兜底）
 async function getByKimi(name, category, apiKey) {
   if (!apiKey) return json({ error: 'API Key missing' }, 500);
   console.log(`[Kimi] 查「${name}」价格，分类=${category}`);
