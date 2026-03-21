@@ -31,16 +31,16 @@ export default {
     }
 
     const url = new URL(request.url);
-    const KIMI_API_KEY = env.KIMI_API_KEY;
-    if (!KIMI_API_KEY) return json({ error: 'KIMI_API_KEY not set' }, 500);
+    const DOUBAO_API_KEY = env.DOUBAO_API_KEY;
+    if (!DOUBAO_API_KEY) return json({ error: 'DOUBAO_API_KEY not set' }, 500);
 
-    // /chat 路由：转发对话请求给 Kimi
+    // /chat 路由：保留兼容旧版本
     if (url.pathname === '/chat') {
       try {
         const body = await request.json();
-        const res = await fetch('https://api.moonshot.cn/v1/chat/completions', {
+        const res = await fetch('https://ark.cn-beijing.volces.com/api/v3/responses', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${KIMI_API_KEY}` },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DOUBAO_API_KEY}` },
           body: JSON.stringify(body),
         });
         const data = await res.json();
@@ -84,8 +84,8 @@ export default {
         }
       }
 
-      // Step 3: 其他资产类别（gold/realestate/car/other）走 Kimi
-      const response = await getByKimi(name, category, KIMI_API_KEY);
+      // Step 3: 其他资产类别（realestate/car/other）走 Doubao 联网搜索
+      const response = await getByDoubao(name, category, DOUBAO_API_KEY);
 
       // Step 4: 写入 KV 缓存（按类别设不同 TTL）
       if (env.PRICE_CACHE) {
@@ -324,10 +324,10 @@ async function getGold(env) {
   }
 }
 
-// Kimi 联网（房产/车辆/其他的兜底）
-async function getByKimi(name, category, apiKey) {
-  if (!apiKey) return json({ error: 'API Key missing' }, 500);
-  console.log(`[Kimi] 查「${name}」价格，分类=${category}`);
+// Doubao 联网搜索（房产/车辆/其他）—— 单轮，服务端执行搜索
+async function getByDoubao(name, category, apiKey) {
+  if (!apiKey) return json({ error: 'DOUBAO_API_KEY not set' }, 500);
+  console.log(`[Doubao] 查「${name}」价格，分类=${category}`);
 
   const systemPrompt = `你是资产估价助手。必须联网搜索获取最新价格。
 只返回JSON，不要任何其他文字，不要markdown代码块：
@@ -335,55 +335,37 @@ async function getByKimi(name, category, apiKey) {
 name字段填写该资产的官方/标准名称，例如房产填小区名，车辆填"2022款丰田凯美瑞"。
 价格必须换算为人民币和中国常用计量单位，严禁返回美元或盎司单位。`;
 
-  const kimiCall = async (msgs) => fetch('https://api.moonshot.cn/v1/chat/completions', {
+  const userContent = category === 'car'
+    ? `资产类别：${category}，资产名称：${name}，请查询该车型当前二手车市场均价（非新车指导价）`
+    : `资产类别：${category}，资产名称：${name}`;
+
+  const res = await fetch('https://ark.cn-beijing.volces.com/api/v3/responses', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: 'kimi-k2.5', messages: msgs,
-      tools: [{ type: 'builtin_function', function: { name: '$web_search' } }],
-      thinking: { type: 'disabled' }, temperature: 0.6, max_tokens: 512,
+      model: 'doubao-seed-2-0-lite-260215',
+      instructions: systemPrompt,
+      input: [{ type: 'message', role: 'user', content: userContent }],
+      tools: [{ type: 'web_search', limit: 3, sources: ['search_engine'] }],
+      max_output_tokens: 512,
     }),
   });
 
-  const messages = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: category === 'car'
-        ? `资产类别：${category}，资产名称：${name}，请查询该车型当前二手车市场均价（非新车指导价）`
-        : `资产类别：${category}，资产名称：${name}` },
-  ];
-
-  let res = await kimiCall(messages);
-  if (!res.ok) throw new Error(`Kimi error: ${res.status}`);
-  let data = await res.json();
-  let choice = data.choices?.[0];
-  if (choice?.finish_reason === 'tool_calls') {
-    const assistantMsg = choice.message;
-    const toolCall = assistantMsg.tool_calls?.[0];
-    if (!toolCall) throw new Error('tool_calls empty');
-    messages.push(assistantMsg);
-    messages.push({ role: 'tool', content: toolCall.function.arguments, tool_call_id: toolCall.id });
-    res = await kimiCall(messages);
-    // 429 限速：等2秒重试一次
-    if (res.status === 429) {
-      await new Promise(r => setTimeout(r, 2000));
-      res = await kimiCall(messages);
-    }
-    if (!res.ok) {
-      const errBody = await res.text();
-      throw new Error(`Kimi round2 ${res.status}: ${errBody.slice(0, 300)}`);
-    }
-    data = await res.json();
-    choice = data.choices?.[0];
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`Doubao error ${res.status}: ${errBody.slice(0, 300)}`);
   }
 
-  const content = choice?.message?.content ?? '';
+  const data = await res.json();
+  const messageItem = data.output?.find(item => item.type === 'message');
+  const content = messageItem?.content?.[0]?.text ?? '';
   const match = content.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error(`No JSON in Kimi response: ${content.slice(0,200)}`);
+  if (!match) throw new Error(`No JSON in Doubao response: ${content.slice(0, 200)}`);
 
   const priceData = JSON.parse(match[0]);
   if (typeof priceData.price === 'string') {
     priceData.price = parseFloat(priceData.price.replace(/[^\d.]/g, ''));
   }
-  if (priceData.note && !priceData.note.includes('·')) priceData.note += ' · Kimi';
+  if (priceData.note && !priceData.note.includes('·')) priceData.note += ' · Doubao';
   return json(priceData);
 }

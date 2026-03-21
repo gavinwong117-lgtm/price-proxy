@@ -30,13 +30,13 @@ SYMBOL = "Au99.99"
 
 
 def fetch() -> float:
-    print(f"[{datetime.now():%H:%M:%S}] 拉取上金所 {SYMBOL} 实时行情...")
-    df = ak.spot_quotations_sge(symbol=SYMBOL)
-    # 取最后一条（最新分钟价）
+    print(f"[{datetime.now():%H:%M:%S}] 拉取上金所 {SYMBOL} 历史收盘价...")
+    df = ak.spot_hist_sge(symbol=SYMBOL)
+    # 取最新一条收盘价
     latest = df.iloc[-1]
-    price = float(latest["现价"])
-    update_time = latest["更新时间"]
-    print(f"[{datetime.now():%H:%M:%S}] {SYMBOL} 最新价 {price} 元/克（{update_time}）")
+    price = float(latest["close"])
+    date = latest["date"]
+    print(f"[{datetime.now():%H:%M:%S}] {SYMBOL} 收盘价 {price} 元/克（{date}）")
     return price
 
 
