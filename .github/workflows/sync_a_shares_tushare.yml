@@ -1,10 +1,10 @@
 name: A股日线收盘同步（Tushare）
 
 on:
-  schedule:
-    # 每个工作日 19:00 北京时间 = 11:00 UTC
-    - cron: '0 11 * * 1-5'
-  workflow_dispatch:   # 允许手动触发
+  # 暂时禁用：新浪每日4次同步 + 7天TTL托底已足够，无需Tushare收盘修正
+  # schedule:
+  #   - cron: '0 11 * * 1-5'
+  workflow_dispatch:   # 保留手动触发入口
 
 jobs:
   sync:
