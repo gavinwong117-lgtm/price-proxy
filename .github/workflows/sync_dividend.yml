@@ -1,0 +1,29 @@
+name: 分红/送股/转增同步（百度财经）
+
+on:
+  schedule:
+    # 每个工作日 16:30 北京时间 = 08:30 UTC
+    - cron: '30 8 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: pip install akshare requests
+
+      - name: 同步分红数据到 Cloudflare KV
+        env:
+          CF_ACCOUNT_ID:      ${{ secrets.CF_ACCOUNT_ID }}
+          CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
+          CF_API_TOKEN:       ${{ secrets.CF_API_TOKEN }}
+        run: python sync_dividend.py

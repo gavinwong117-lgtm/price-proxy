@@ -57,6 +57,18 @@ export default {
 
       if (!category) return json({ error: 'Missing category' }, 400);
 
+      // 分红数据：返回 dividend:ALL blob
+      if (category === '__dividends__') {
+        const blob = await env.PRICE_CACHE.get('dividend:ALL');
+        return json({ data: blob ? JSON.parse(blob) : {} });
+      }
+
+      // 汇率数据：返回 fx:ALL blob
+      if (category === '__fx__') {
+        const blob = await env.PRICE_CACHE.get('fx:ALL');
+        return json({ data: blob ? JSON.parse(blob) : {} });
+      }
+
       // 股票/基金/加密货币/黄金直接路由，不走独立 key 缓存
       const codeCategories = ['stock_cn', 'stock_hk', 'stock_us', 'fund', 'crypto', 'gold'];
       if (codeCategories.includes(category)) {
@@ -186,11 +198,10 @@ async function getStockUS(name, env) {
     const usdPrice = priceData.f43 / 1000;
     const stockName = priceData.f58;
     const changePct = (priceData.f170 / 100).toFixed(2);
-    const cnyPrice = Math.round(usdPrice * 7.25 * 100) / 100;
     console.log(`[东财] 美股 ${ticker} 实时价 $${usdPrice}`);
     return json({
-      price: cnyPrice, unit: '元/股',
-      note: `${stockName} 原价 $${usdPrice}，按7.25汇率换算，较昨收${parseFloat(changePct) > 0 ? '+' : ''}${changePct}% · 实时`,
+      price: usdPrice, unit: '美元/股',
+      note: `${stockName} 较昨收${parseFloat(changePct) > 0 ? '+' : ''}${changePct}% · 实时`,
       confidence: 'high', name: stockName,
     });
   } catch (e) {
@@ -227,8 +238,8 @@ async function getStockHK(name, env) {
 
     console.log(`[东财] 港股 ${code} 实时价 HK$${hkdPrice}`);
     return json({
-      price: Math.round(hkdPrice * 0.92 * 100) / 100, unit: '元/股',
-      note: `${stockName} 原价 HK$${hkdPrice}，按0.92汇率换算，较昨收${parseFloat(changePct) > 0 ? '+' : ''}${changePct}% · 实时`,
+      price: hkdPrice, unit: '港元/股',
+      note: `${stockName} 较昨收${parseFloat(changePct) > 0 ? '+' : ''}${changePct}% · 实时`,
       confidence: 'high', name: stockName,
     });
   } catch (e) {
@@ -333,7 +344,7 @@ async function getByDoubao(name, category, apiKey) {
 只返回JSON，不要任何其他文字，不要markdown代码块：
 {"price":数字,"unit":"单位","note":"一句话说明","confidence":"high/medium/low","name":"资产标准名称"}
 name字段填写该资产的官方/标准名称，例如房产填小区名，车辆填"2022款丰田凯美瑞"。
-价格必须换算为人民币和中国常用计量单位，严禁返回美元或盎司单位。`;
+价格必须换算为人民币元（整数），unit字段固定为"元"，严禁使用万元、美元、港元、盎司等单位。`;
 
   const userContent = category === 'car'
     ? `资产类别：${category}，资产名称：${name}，请查询该车型当前二手车市场均价（非新车指导价）`
@@ -365,6 +376,11 @@ name字段填写该资产的官方/标准名称，例如房产填小区名，车
   const priceData = JSON.parse(match[0]);
   if (typeof priceData.price === 'string') {
     priceData.price = parseFloat(priceData.price.replace(/[^\d.]/g, ''));
+  }
+  // 万元 → 元
+  if (priceData.unit && priceData.unit.includes('万')) {
+    priceData.price = Math.round(priceData.price * 10000);
+    priceData.unit = priceData.unit.replace('万元', '元').replace('万', '元');
   }
   if (priceData.note && !priceData.note.includes('·')) priceData.note += ' · Doubao';
   return json(priceData);
