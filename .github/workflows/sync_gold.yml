@@ -2,8 +2,8 @@ name: 黄金价格同步（上金所）
 
 on:
   schedule:
-    # 每个工作日 08:00 北京时间 = 00:00 UTC
-    - cron: '0 0 * * 1-5'
+    # 每个工作日 15:30 北京时间 = 07:30 UTC（收盘后同步当日金价）
+    - cron: '30 7 * * 1-5'
   workflow_dispatch:
 
 jobs:
