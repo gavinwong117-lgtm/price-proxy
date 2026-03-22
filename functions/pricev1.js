@@ -34,6 +34,24 @@ export default {
     const DOUBAO_API_KEY = env.DOUBAO_API_KEY;
     if (!DOUBAO_API_KEY) return json({ error: 'DOUBAO_API_KEY not set' }, 500);
 
+    // /activate 路由：激活码验证
+    if (url.pathname === '/activate') {
+      try {
+        const { key } = await request.json();
+        if (!key) return json({ error: '请输入激活码' }, 400);
+        const kvVal = await env.PRICE_CACHE.get(`license:${key}`);
+        if (!kvVal) return json({ error: '激活码无效，请检查后重试' }, 400);
+        const licData = JSON.parse(kvVal);
+        if (licData.activated) return json({ error: '该激活码已被使用' }, 400);
+        licData.activated = true;
+        licData.activatedAt = new Date().toISOString().slice(0, 10);
+        await env.PRICE_CACHE.put(`license:${key}`, JSON.stringify(licData));
+        return json({ success: true });
+      } catch (e) {
+        return json({ error: e.message }, 500);
+      }
+    }
+
     // /chat 路由：保留兼容旧版本
     if (url.pathname === '/chat') {
       try {
@@ -69,6 +87,16 @@ export default {
         return json({ data: blob ? JSON.parse(blob) : {} });
       }
 
+      // 本地缓存下载：返回完整 KV blob，供 APP 本地缓存
+      // 直接注入原始字符串，避免大 blob 双重解析导致 CPU 超限
+      if (category === '__blob__') {
+        const blobMap = { stock_cn: 'stock_cn:ALL', stock_hk: 'stock_hk:ALL', stock_us: 'stock_us:ALL', fund: 'fund:ALL', gold: 'gold:ALL', crypto: 'crypto:ALL' };
+        const kvKey = blobMap[name];
+        if (!kvKey) return json({ error: 'unknown blob type' }, 400);
+        const blobStr = await env.PRICE_CACHE.get(kvKey);
+        return new Response(`{"data":${blobStr ?? '{}'}}`, { headers: CORS_HEADERS });
+      }
+
       // 股票/基金/加密货币/黄金直接路由，不走独立 key 缓存
       const codeCategories = ['stock_cn', 'stock_hk', 'stock_us', 'fund', 'crypto', 'gold'];
       if (codeCategories.includes(category)) {
@@ -97,6 +125,15 @@ export default {
       }
 
       // Step 3: 其他资产类别（realestate/car/other）走 Doubao 联网搜索
+      // 有 License Key 时验证；无 key 时依赖 APP 侧试用次数控制，直接放行
+      const licKey = request.headers.get('X-License-Key');
+      if (licKey) {
+        const licKV = await env.PRICE_CACHE.get(`license:${licKey}`);
+        if (!licKV) return json({ error: '激活码无效', code: 'LICENSE_INVALID' }, 402);
+        const licData = JSON.parse(licKV);
+        if (!licData.activated) return json({ error: '激活码未激活', code: 'LICENSE_INVALID' }, 402);
+      }
+
       const response = await getByDoubao(name, category, DOUBAO_API_KEY);
 
       // Step 4: 写入 KV 缓存（按类别设不同 TTL）
